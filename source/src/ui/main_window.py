@@ -96,6 +96,8 @@ class BackupApp:
         # If started with autostart args, keep retrying for a short period.
         # On some systems Task Scheduler triggers before the drive is fully mounted.
         if self.autostart_device_id:
+            # Show that this run was started by autolaunch.
+            self.autolaunch_status_var.set("Автозапуск: включен")
             self._autostart_retry_left = 15
             self.root.after(900, self._maybe_autostart_scan)
 
@@ -593,9 +595,15 @@ class BackupApp:
 
     def _selected_device_info(self):
         selected = self.selected_device.get()
+        chosen_drive = ""
+        try:
+            # expected like "D:\ (NAME)"
+            if len(selected) >= 3 and selected[1] == ":":
+                chosen_drive = selected[:3].upper()
+        except Exception:
+            chosen_drive = ""
         for d in self.devices:
-            label = f"{d.drive_kind}: {d.drive} ({d.volume_label}) [{d.device_id}]"
-            if label == selected:
+            if chosen_drive and d.drive.upper() == chosen_drive:
                 return d
         return None
 
@@ -623,7 +631,7 @@ class BackupApp:
 
     def refresh_devices(self) -> None:
         self.devices = DeviceDetector.list_source_devices()
-        labels = [f"{d.drive_kind}: {d.drive} ({d.volume_label}) [{d.device_id}]" for d in self.devices]
+        labels = [f"{d.drive} ({d.volume_label})" for d in self.devices]
         self.device_combo.configure(values=labels)
         if labels and not self.selected_device.get():
             self.selected_device.set(labels[0])
@@ -642,8 +650,9 @@ class BackupApp:
 
         for d in self.devices:
             if d.device_id == self.autostart_device_id:
-                label = f"{d.drive_kind}: {d.drive} ({d.volume_label}) [{d.device_id}]"
+                label = f"{d.drive} ({d.volume_label})"
                 self._log(f"Автозапуск: обнаружена флешка {label}. Запускаю сканирование.")
+                self.autolaunch_status_var.set(f"Автозапуск: включен ({d.drive} {d.volume_label})")
                 self.selected_device.set(label)
                 self.analyze_backup_mode()
                 return

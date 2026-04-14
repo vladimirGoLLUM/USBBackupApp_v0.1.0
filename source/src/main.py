@@ -10,6 +10,8 @@ import customtkinter as ctk
 
 from ui.main_window import BackupApp
 
+from device_detector import DeviceDetector
+
 ERROR_ALREADY_EXISTS = 183
 _SINGLE_INSTANCE_MUTEX = None
 
@@ -21,6 +23,16 @@ def main() -> None:
     parser.add_argument("--autostart-volume-label", default="")
     parser.add_argument("--elevated", action="store_true")
     args, _unknown = parser.parse_known_args()
+
+    # If Task Scheduler triggers on unrelated device arrivals, we may still be launched
+    # with the saved autostart ID. Exit early unless the target device is actually present.
+    if args.autostart_device_id:
+        try:
+            present_ids = [d.device_id for d in DeviceDetector.list_source_devices()]
+            if args.autostart_device_id not in present_ids:
+                return
+        except Exception as e:
+            _ = e
 
     # Task Scheduler can emit several arrival events quickly.
     # Avoid multiple app windows for one USB insert.
