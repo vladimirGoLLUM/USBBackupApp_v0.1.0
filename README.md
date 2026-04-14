@@ -19,7 +19,7 @@
 
 Если вы не планируете изменять код, используйте готовую сборку для Windows:
 
-1. Перейдите в раздел [**Releases**](https://github.com/vladimirGoLLUM/USBBackupApp_v0.1.0/releases/latest).
+1. Перейдите в раздел [**Releases**](https://github.com/pycraft-dev/USBBackupApp_v0.1.0/releases/latest).
 2. Скачайте архив `USBBackupApp_v0.1.0.zip`.
 3. Распакуйте архив и запустите файл `USBBackupApp.exe`.
 
@@ -87,7 +87,7 @@ source/
 - Не отключайте флешку во время копирования.
 - Для корректной работы используйте локальные диски/папки с полным доступом.
 - Если папка бэкапа находится в синхронизируемом каталоге (OneDrive и др.), возможны редкие ошибки доступа к отдельным файлам — они пропускаются с предупреждением.
-- Для связи с автором: `GoLLuM@21051992.ru`.
+- Для связи с автором: [pycraft-dev@21051992.ru](mailto:pycraft-dev@21051992.ru).
 
 ---
 
@@ -95,7 +95,8 @@ source/
 Вам нужна подобная программа, автоматизация или доработка на Python/WordPress? 
 Я открыт для новых проектов!
 
-- **Мой профиль на Kwork:** [kwork.ru/user/gollumlotr](https://kwork.ru/user/gollumlotr)
-- **Связаться со мной:** [GoLLuM@21051992.ru](mailto:GoLLuM@21051992.ru)
+- **Мой профиль на Kwork:** [kwork.ru/user/pycraft-dev](https://kwork.ru/user/pycraft-dev)
+- **GitHub:** [github.com/pycraft-dev](https://github.com/pycraft-dev)
+- **Связаться со мной:** [pycraft-dev@21051992.ru](mailto:pycraft-dev@21051992.ru)
 
 *Сделаю ваш софт быстрым, надежным и современным.*

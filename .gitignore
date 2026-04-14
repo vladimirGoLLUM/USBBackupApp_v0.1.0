@@ -1,3 +1,11 @@
 /.cursor
 /.cursorrules
 /.vscode
+
+# Python / build artifacts
+__pycache__/
+*.py[cod]
+
+# PyInstaller output
+/source/build/
+/source/dist/

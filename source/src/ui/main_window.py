@@ -29,7 +29,7 @@ class BackupApp:
     ACTION_FULL_LABEL = "СДЕЛАТЬ ПОЛНЫЙ БЭКАП"
     ACTION_TO_BACKUP_LABEL = "ОБНОВИТЬ ПАПКУ БЭКАПА"
     ACTION_TO_USB_LABEL = "ЗАГРУЗИТЬ ОТЛИЧИЯ НА ФЛЕШКУ"
-    FEEDBACK_EMAIL = "GoLLuM@21051992.ru"
+    FEEDBACK_EMAIL = "pycraft-dev@21051992.ru"
 
     BG_COLOR = "#1a1a1a"
     PANEL_COLOR = "#202020"
