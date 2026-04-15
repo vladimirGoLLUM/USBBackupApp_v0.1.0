@@ -91,12 +91,14 @@ source/
 
 ---
 
-## 🚀 Заказать разработку
-Вам нужна подобная программа, автоматизация или доработка на Python/WordPress? 
-Я открыт для новых проектов!
+## 📬 Контакты разработчика
 
-- **Мой профиль на Kwork:** [kwork.ru/user/pycraft-dev](https://kwork.ru/user/pycraft-dev)
-- **GitHub:** [github.com/pycraft-dev](https://github.com/pycraft-dev)
-- **Связаться со мной:** [pycraft-dev@21051992.ru](mailto:pycraft-dev@21051992.ru)
+**Вова | pycraft-dev**  
+Python-разработчик • Современные GUI-приложения • Автоматизация
 
-*Сделаю ваш софт быстрым, надежным и современным.*
+📧 [pycraft-dev@21051992.ru](mailto:pycraft-dev@21051992.ru)  
+💬 Telegram: [@Pycraftdev](https://t.me/Pycraftdev)  
+💼 [Kwork](https://kwork.ru/user/pycraft-dev)  
+🐙 [GitHub](https://github.com/pycraft-dev)
+
+> 💡 *Нужно похожее приложение под ваши задачи? Напишите — обсудим!*
