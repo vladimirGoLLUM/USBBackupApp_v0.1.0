@@ -46,6 +46,10 @@ pyinstaller --noconfirm USBBackupApp.spec
 
 Готовый файл: `dist\USBBackupApp.exe`.
 
+## Язык интерфейса
+
+В правом верхнем углу главного окна можно выбрать **RU** или **EN**. Выбор сохраняется в файле состояния `app_state.json` (поле `language`: `ru` или `en`) рядом с путём последней папки бэкапа. В режиме разработки файл лежит в [`source/config/app_state.json`](source/config/app_state.json); в установленной сборке — в каталоге профиля пользователя (см. `resolve_app_state_path` в коде). Словари переводов — [`source/data/translations.json`](source/data/translations.json).
+
 ## Документация
 
 ### Быстрый старт
@@ -81,7 +85,9 @@ source/
 │   ├── device_detector.py     # Определение устройств (Volume Serial HEX)
 │   ├── core/                  # Бизнес-логика: сканирование, хеш, копирование
 │   ├── ui/                    # Главное окно (Single-window UI)
+│   ├── utils/                 # Утилиты (локализация i18n)
 │   └── services/              # Сервисный слой: scan, transfer, autolaunch, wmi_daemon
+├── data/                      # Переводы (translations.json)
 ├── assets/                    # Иконка приложения
 ├── config/                    # Локальное состояние (app_state.json)
 ├── tests/                     # Тесты

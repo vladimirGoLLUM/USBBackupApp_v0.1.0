@@ -19,6 +19,7 @@ from services.scan_service import ScanService
 from services.transfer_service import TransferService
 from device_detector import DeviceDetector
 from ui.progress_presenter import ProgressPresenter
+from utils.i18n import LanguageManager
 
 APP_STATE_PATH = resolve_app_state_path()
 
@@ -42,9 +43,6 @@ def _normalize_autostart_device_id(raw: str) -> str:
 class BackupApp:
     """Main customtkinter window and user workflow coordinator."""
 
-    ACTION_FULL_LABEL = "СДЕЛАТЬ ПОЛНЫЙ БЭКАП"
-    ACTION_TO_BACKUP_LABEL = "ОБНОВИТЬ ПАПКУ БЭКАПА"
-    ACTION_TO_USB_LABEL = "ЗАГРУЗИТЬ ОТЛИЧИЯ НА ФЛЕШКУ"
     FEEDBACK_EMAIL = "pycraft-dev@21051992.ru"
 
     BG_COLOR = "#1a1a1a"
@@ -69,7 +67,6 @@ class BackupApp:
         self.root = root
         ctk.set_appearance_mode("dark")
         self.version = read_version()
-        self.root.title(f"USB Backup App — v{self.version}")
         self.root.geometry("1140x760")
         self.root.minsize(1020, 700)
         self.root.configure(fg_color=self.BG_COLOR)
@@ -79,13 +76,25 @@ class BackupApp:
         self.laconic_log = True
         self.log_autofollow = True
 
+        self.language_manager = LanguageManager()
+        raw_state = self._read_first_app_state()
+        if raw_state:
+            lang = str(raw_state.get("language", "ru")).strip().lower()
+            if lang in LanguageManager.SUPPORTED:
+                self.language_manager.set_language(lang)
+
         self.selected_device = StringVar()
         self.backup_target_dir = StringVar()
-        self.status = StringVar(value="Выберите устройство и папку бэкапа")
-        self.progress_text = StringVar(value="Прогресс: 0%")
-        self.time_text = StringVar(value="Прошло: 00:00:00 | Осталось: --:--:--")
-        self.progress_detail_text = StringVar(value="Файл: -")
-        self.progress_speed_text = StringVar(value="Скорость: 0.00 МБ/с")
+        if raw_state:
+            last_backup_path = str(raw_state.get("last_backup_path", "")).strip()
+            if last_backup_path:
+                self.backup_target_dir.set(last_backup_path)
+
+        self.status = StringVar(value=self._tr("status_pick_device_and_backup"))
+        self.progress_text = StringVar(value=self._tr("progress_zero"))
+        self.time_text = StringVar(value=self._tr("time_initial"))
+        self.progress_detail_text = StringVar(value=self._tr("file_dash"))
+        self.progress_speed_text = StringVar(value=self._tr("speed_zero"))
         self.active_operation = None
 
         self.transfer_cancel_requested = False
@@ -100,13 +109,13 @@ class BackupApp:
         self._autostart_retry_left = 0
 
         # Task Scheduler one-click setup UI
-        self.autolaunch_status_var = StringVar(value="Автозапуск: выключен")
+        self.autolaunch_status_var = StringVar(value=self._tr("autolaunch_status_off"))
 
         self._build_ui()
+        self.root.title(self._tr("window_title", version=self.version))
         self.selected_device.trace_add("write", lambda *_: self._on_inputs_changed())
         self.backup_target_dir.trace_add("write", lambda *_: self._on_inputs_changed())
         self.backup_target_dir.trace_add("write", lambda *_: self._save_app_state())
-        self._load_app_state()
         self.refresh_devices()
         self._refresh_autolaunch_status_from_system()
 
@@ -114,22 +123,132 @@ class BackupApp:
         # On some systems Task Scheduler triggers before the drive is fully mounted.
         if self.autostart_device_id:
             # Show that this run was started by autolaunch.
-            self.autolaunch_status_var.set("Автозапуск: включен")
+            self.autolaunch_status_var.set(self._tr("autolaunch_status_on"))
             self._autostart_retry_left = 15
             self.root.after(900, self._maybe_autostart_scan)
+
+    def _tr(self, key: str, **kwargs) -> str:
+        """Возвращает локализованную строку по ключу."""
+        return self.language_manager.get(key, **kwargs)
+
+    @staticmethod
+    def _read_first_app_state() -> dict | None:
+        """Читает первый доступный файл состояния (основной или legacy)."""
+        legacy_path = PROJECT_ROOT / "config" / "app_state.json"
+        candidates = [APP_STATE_PATH]
+        if legacy_path != APP_STATE_PATH:
+            candidates.append(legacy_path)
+        for state_path in candidates:
+            if not state_path.exists():
+                continue
+            try:
+                return json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+        return None
+
+    def _size_units(self) -> tuple[str, str, str, str]:
+        """Подписи единиц размера для ProgressPresenter."""
+        return (
+            self._tr("unit_b"),
+            self._tr("unit_kb"),
+            self._tr("unit_mb"),
+            self._tr("unit_gb"),
+        )
+
+    def _localize_scan_service_message(self, raw: str) -> str:
+        """Переводит известные служебные сообщения сканирования без изменения сервиса."""
+        if raw == "На флешке нет файлов для бэкапа":
+            return self._tr("scan.empty_usb")
+        return raw
+
+    def _apply_idle_progress_strings(self) -> None:
+        """Выставляет тексты прогресса в состоянии покоя (без активной операции)."""
+        if self.is_busy:
+            return
+        self.progress_text.set(self._tr("progress_zero"))
+        self.time_text.set(self._tr("time_initial"))
+        self.progress_detail_text.set(self._tr("file_dash"))
+        self.progress_speed_text.set(self._tr("speed_zero"))
+
+    def _on_language_change(self, choice: str) -> None:
+        """Обработчик смены языка в сегментированной кнопке."""
+        if choice not in LanguageManager.SUPPORTED:
+            return
+        self.language_manager.set_language(str(choice))
+        self.update_ui_language()
+        self._save_app_state()
+
+    def update_ui_language(self) -> None:
+        """Обновляет все статические подписи окна под текущий язык."""
+        self.root.title(self._tr("window_title", version=self.version))
+        if hasattr(self, "header_title_lbl"):
+            self.header_title_lbl.configure(text=self._tr("app_title"))
+        if hasattr(self, "header_subtitle_lbl"):
+            self.header_subtitle_lbl.configure(text=self._tr("subtitle_tagline"))
+        if hasattr(self, "lang_label"):
+            self.lang_label.configure(text=self._tr("language_label"))
+        if hasattr(self, "feedback_prefix_label"):
+            self.feedback_prefix_label.configure(text=self._tr("feedback_prefix"))
+        if hasattr(self, "section_source_lbl"):
+            self.section_source_lbl.configure(text=self._tr("section_source"))
+        if hasattr(self, "source_hint_lbl"):
+            self.source_hint_lbl.configure(text=self._tr("source_hint"))
+        if hasattr(self, "refresh_button"):
+            self.refresh_button.configure(text=self._tr("refresh"))
+        if hasattr(self, "section_settings_lbl"):
+            self.section_settings_lbl.configure(text=self._tr("section_settings"))
+        if hasattr(self, "backup_hint_lbl"):
+            self.backup_hint_lbl.configure(text=self._tr("backup_folder_hint"))
+        if hasattr(self, "backup_target_entry"):
+            self.backup_target_entry.configure(placeholder_text=self._tr("placeholder_backup_folder"))
+        if hasattr(self, "browse_backup_button"):
+            self.browse_backup_button.configure(text=self._tr("browse"))
+        if hasattr(self, "analyze_button"):
+            self.analyze_button.configure(text=self._tr("scan_folder"))
+        if hasattr(self, "section_mode_lbl"):
+            self.section_mode_lbl.configure(text=self._tr("section_mode"))
+        if hasattr(self, "mode_hint_lbl"):
+            self.mode_hint_lbl.configure(text=self._tr("mode_auto_hint"))
+        if hasattr(self, "full_backup_button"):
+            self.full_backup_button.configure(text=self._tr("full_backup"))
+        if hasattr(self, "incremental_button"):
+            self.incremental_button.configure(text=self._tr("update_backup"))
+        if hasattr(self, "sync_to_usb_button"):
+            self.sync_to_usb_button.configure(text=self._tr("upload_diff"))
+        if hasattr(self, "autolaunch_section_lbl"):
+            self.autolaunch_section_lbl.configure(text=self._tr("section_autolaunch"))
+        if hasattr(self, "enable_autolaunch_button"):
+            self.enable_autolaunch_button.configure(text=self._tr("autolaunch_enable"))
+        if hasattr(self, "disable_autolaunch_button"):
+            self.disable_autolaunch_button.configure(text=self._tr("autolaunch_disable"))
+        if hasattr(self, "journal_title_lbl"):
+            self.journal_title_lbl.configure(text=self._tr("section_journal"))
+        if hasattr(self, "copyright_label"):
+            self.copyright_label.configure(text=self._tr("copyright"))
+        if hasattr(self, "language_segment"):
+            self.language_segment.set(self.language_manager.language)
+            self.language_segment.configure(state="disabled" if self.is_busy else "normal")
+        if not self.is_busy and hasattr(self, "main_cancel_button"):
+            self.main_cancel_button.configure(text=self._tr("cancel"))
+        self._refresh_autolaunch_status_from_system()
+        self._apply_idle_progress_strings()
+        self._on_inputs_changed(clear_analysis=False)
 
     def _refresh_autolaunch_status_from_system(self) -> None:
         """Синхронизирует статус автозапуска с реальной задачей Планировщика."""
         try:
             target = (AutoLaunchService.get_enabled_target_serial_hex() or "").strip().upper()
             if not target:
-                self.autolaunch_status_var.set("Автозапуск: выключен")
+                self.autolaunch_status_var.set(self._tr("autolaunch_status_off"))
                 return
             for d in getattr(self, "devices", []) or []:
                 if (d.device_id or "").strip().upper() == target:
-                    self.autolaunch_status_var.set(f"Автозапуск: включен ({d.drive} {d.volume_label})")
+                    self.autolaunch_status_var.set(
+                        self._tr("autolaunch_status_on_drive", drive=d.drive, label=d.volume_label)
+                    )
                     return
-            self.autolaunch_status_var.set(f"Автозапуск: включен (ID {target})")
+            self.autolaunch_status_var.set(self._tr("autolaunch_status_on_id", id=target))
         except Exception:
             # If anything goes wrong, keep UI usable and avoid noisy popups.
             return
@@ -151,28 +270,55 @@ class BackupApp:
         header.pack(fill="x", pady=(0, 10))
         title_row = ctk.CTkFrame(header, fg_color="transparent")
         title_row.pack(fill="x", padx=14, pady=(12, 10))
-        ctk.CTkLabel(
+        self.header_title_lbl = ctk.CTkLabel(
             title_row,
-            text="USB Backup App",
+            text=self._tr("app_title"),
             text_color=self.TEXT_COLOR,
             font=ctk.CTkFont(family=font_family, size=20, weight="bold"),
-        ).pack(side="left", anchor="w")
+        )
+        self.header_title_lbl.pack(side="left", anchor="w")
         right_block = ctk.CTkFrame(title_row, fg_color="transparent")
         right_block.pack(side="right", anchor="e")
-        ctk.CTkLabel(
-            right_block,
-            text="Резервное копирование флешки",
-            text_color=self.MUTED_TEXT_COLOR,
-            font=ctk.CTkFont(family=font_family, size=13),
-        ).pack(anchor="e")
-        feedback_row = ctk.CTkFrame(right_block, fg_color="transparent")
-        feedback_row.pack(anchor="e", pady=(2, 0))
-        ctk.CTkLabel(
-            feedback_row,
-            text="Обратная связь:",
+        lang_row = ctk.CTkFrame(right_block, fg_color="transparent")
+        lang_row.pack(anchor="e", pady=(0, 2))
+        self.lang_label = ctk.CTkLabel(
+            lang_row,
+            text=self._tr("language_label"),
             text_color=self.MUTED_TEXT_COLOR,
             font=ctk.CTkFont(family=font_family, size=12),
-        ).pack(side="left")
+        )
+        self.lang_label.pack(side="left")
+        self.language_segment = ctk.CTkSegmentedButton(
+            lang_row,
+            values=["ru", "en"],
+            command=self._on_language_change,
+            font=ctk.CTkFont(family=font_family, size=12),
+            height=28,
+            corner_radius=8,
+            selected_color=self.ACCENT_COLOR,
+            selected_hover_color=self.ACCENT_HOVER_COLOR,
+            unselected_color=self.BORDER_COLOR,
+            unselected_hover_color="#3a3a3a",
+            text_color=self.TEXT_COLOR,
+        )
+        self.language_segment.set(self.language_manager.language)
+        self.language_segment.pack(side="left", padx=(8, 0))
+        self.header_subtitle_lbl = ctk.CTkLabel(
+            right_block,
+            text=self._tr("subtitle_tagline"),
+            text_color=self.MUTED_TEXT_COLOR,
+            font=ctk.CTkFont(family=font_family, size=13),
+        )
+        self.header_subtitle_lbl.pack(anchor="e")
+        feedback_row = ctk.CTkFrame(right_block, fg_color="transparent")
+        feedback_row.pack(anchor="e", pady=(2, 0))
+        self.feedback_prefix_label = ctk.CTkLabel(
+            feedback_row,
+            text=self._tr("feedback_prefix"),
+            text_color=self.MUTED_TEXT_COLOR,
+            font=ctk.CTkFont(family=font_family, size=12),
+        )
+        self.feedback_prefix_label.pack(side="left")
         self.feedback_link = ctk.CTkLabel(
             feedback_row,
             text=self.FEEDBACK_EMAIL,
@@ -205,18 +351,20 @@ class BackupApp:
         source_block = ctk.CTkFrame(left_panel, fg_color=self.PANEL_ALT_COLOR, corner_radius=10)
         source_block.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 8))
         source_block.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
+        self.section_source_lbl = ctk.CTkLabel(
             source_block,
-            text="Источник",
+            text=self._tr("section_source"),
             text_color=self.TEXT_COLOR,
             font=ctk.CTkFont(family=font_family, size=14, weight="bold"),
-        ).grid(row=0, column=0, sticky="w", padx=12, pady=(10, 4))
-        ctk.CTkLabel(
+        )
+        self.section_source_lbl.grid(row=0, column=0, sticky="w", padx=12, pady=(10, 4))
+        self.source_hint_lbl = ctk.CTkLabel(
             source_block,
-            text="Источник (USB/диск)",
+            text=self._tr("source_hint"),
             text_color=self.MUTED_TEXT_COLOR,
             font=ctk.CTkFont(family=font_family, size=12),
-        ).grid(row=1, column=0, sticky="w", padx=12, pady=(0, 6))
+        )
+        self.source_hint_lbl.grid(row=1, column=0, sticky="w", padx=12, pady=(0, 6))
         self.device_combo = ctk.CTkComboBox(
             source_block,
             variable=self.selected_device,
@@ -237,7 +385,7 @@ class BackupApp:
         self.device_combo.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 8))
         self.refresh_button = ctk.CTkButton(
             source_block,
-            text="Обновить",
+            text=self._tr("refresh"),
             command=self.refresh_devices,
             corner_radius=10,
             height=34,
@@ -251,18 +399,20 @@ class BackupApp:
         settings_block = ctk.CTkFrame(left_panel, fg_color=self.PANEL_ALT_COLOR, corner_radius=10)
         settings_block.grid(row=1, column=0, sticky="ew", padx=10, pady=8)
         settings_block.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
+        self.section_settings_lbl = ctk.CTkLabel(
             settings_block,
-            text="Настройки",
+            text=self._tr("section_settings"),
             text_color=self.TEXT_COLOR,
             font=ctk.CTkFont(family=font_family, size=14, weight="bold"),
-        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(10, 4))
-        ctk.CTkLabel(
+        )
+        self.section_settings_lbl.grid(row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(10, 4))
+        self.backup_hint_lbl = ctk.CTkLabel(
             settings_block,
-            text="Папка для бэкапа",
+            text=self._tr("backup_folder_hint"),
             text_color=self.MUTED_TEXT_COLOR,
             font=ctk.CTkFont(family=font_family, size=12),
-        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 6))
+        )
+        self.backup_hint_lbl.grid(row=1, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 6))
         self.backup_target_entry = ctk.CTkEntry(
             settings_block,
             textvariable=self.backup_target_dir,
@@ -271,13 +421,13 @@ class BackupApp:
             fg_color=self.BG_COLOR,
             border_color=self.BORDER_COLOR,
             text_color=self.TEXT_COLOR,
-            placeholder_text="Выберите папку",
+            placeholder_text=self._tr("placeholder_backup_folder"),
             font=ctk.CTkFont(family=font_family, size=12),
         )
         self.backup_target_entry.grid(row=2, column=0, sticky="ew", padx=(12, 6), pady=(0, 8))
         self.browse_backup_button = ctk.CTkButton(
             settings_block,
-            text="Обзор",
+            text=self._tr("browse"),
             command=self.pick_backup_target,
             width=88,
             corner_radius=10,
@@ -290,7 +440,7 @@ class BackupApp:
         self.browse_backup_button.grid(row=2, column=1, sticky="e", padx=(0, 12), pady=(0, 8))
         self.analyze_button = ctk.CTkButton(
             settings_block,
-            text="Сканировать папку",
+            text=self._tr("scan_folder"),
             command=self.analyze_backup_mode,
             corner_radius=10,
             height=36,
@@ -304,23 +454,25 @@ class BackupApp:
         mode_block = ctk.CTkFrame(left_panel, fg_color=self.PANEL_ALT_COLOR, corner_radius=10)
         mode_block.grid(row=2, column=0, sticky="ew", padx=10, pady=8)
         mode_block.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
+        self.section_mode_lbl = ctk.CTkLabel(
             mode_block,
-            text="Режим",
+            text=self._tr("section_mode"),
             text_color=self.TEXT_COLOR,
             font=ctk.CTkFont(family=font_family, size=14, weight="bold"),
-        ).grid(row=0, column=0, sticky="w", padx=12, pady=(10, 2))
-        ctk.CTkLabel(
+        )
+        self.section_mode_lbl.grid(row=0, column=0, sticky="w", padx=12, pady=(10, 2))
+        self.mode_hint_lbl = ctk.CTkLabel(
             mode_block,
-            text="Режим выбирается автоматически после сканирования",
+            text=self._tr("mode_auto_hint"),
             text_color=self.MUTED_TEXT_COLOR,
             font=ctk.CTkFont(family=font_family, size=11),
             wraplength=380,
             justify="left",
-        ).grid(row=1, column=0, sticky="w", padx=12, pady=(0, 8))
+        )
+        self.mode_hint_lbl.grid(row=1, column=0, sticky="w", padx=12, pady=(0, 8))
         self.full_backup_button = ctk.CTkButton(
             mode_block,
-            text=self.ACTION_FULL_LABEL,
+            text=self._tr("full_backup"),
             command=self.run_full_backup,
             corner_radius=10,
             height=34,
@@ -329,7 +481,7 @@ class BackupApp:
         self.full_backup_button.grid(row=2, column=0, sticky="ew", padx=12, pady=4)
         self.incremental_button = ctk.CTkButton(
             mode_block,
-            text=self.ACTION_TO_BACKUP_LABEL,
+            text=self._tr("update_backup"),
             command=self.run_incremental_backup,
             corner_radius=10,
             height=34,
@@ -338,7 +490,7 @@ class BackupApp:
         self.incremental_button.grid(row=3, column=0, sticky="ew", padx=12, pady=4)
         self.sync_to_usb_button = ctk.CTkButton(
             mode_block,
-            text=self.ACTION_TO_USB_LABEL,
+            text=self._tr("upload_diff"),
             command=self.run_sync_to_usb,
             corner_radius=10,
             height=34,
@@ -350,12 +502,13 @@ class BackupApp:
         self.autolaunch_block = autolaunch_block
         autolaunch_block.grid(row=3, column=0, sticky="ew", padx=10, pady=(8, 10))
         autolaunch_block.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
+        self.autolaunch_section_lbl = ctk.CTkLabel(
             autolaunch_block,
-            text="Автозапуск по флешке",
+            text=self._tr("section_autolaunch"),
             text_color=self.TEXT_COLOR,
             font=ctk.CTkFont(family=font_family, size=14, weight="bold"),
-        ).grid(row=0, column=0, sticky="w", padx=12, pady=(10, 4))
+        )
+        self.autolaunch_section_lbl.grid(row=0, column=0, sticky="w", padx=12, pady=(10, 4))
         self.autolaunch_status_label = ctk.CTkLabel(
             autolaunch_block,
             textvariable=self.autolaunch_status_var,
@@ -367,7 +520,7 @@ class BackupApp:
         self.autolaunch_status_label.grid(row=1, column=0, sticky="w", padx=12, pady=(0, 8))
         self.enable_autolaunch_button = ctk.CTkButton(
             autolaunch_block,
-            text="Включить автозапуск",
+            text=self._tr("autolaunch_enable"),
             command=self.enable_usb_autolaunch,
             corner_radius=10,
             height=34,
@@ -379,7 +532,7 @@ class BackupApp:
         self.enable_autolaunch_button.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 6))
         self.disable_autolaunch_button = ctk.CTkButton(
             autolaunch_block,
-            text="Отключить автозапуск",
+            text=self._tr("autolaunch_disable"),
             command=self.disable_usb_autolaunch,
             corner_radius=10,
             height=34,
@@ -400,12 +553,13 @@ class BackupApp:
         right_panel.grid(row=0, column=1, sticky="nsew")
         right_panel.grid_columnconfigure(0, weight=1)
         right_panel.grid_rowconfigure(1, weight=1)
-        ctk.CTkLabel(
+        self.journal_title_lbl = ctk.CTkLabel(
             right_panel,
-            text="Журнал",
+            text=self._tr("section_journal"),
             text_color=self.TEXT_COLOR,
             font=ctk.CTkFont(family=font_family, size=16, weight="bold"),
-        ).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 0))
+        )
+        self.journal_title_lbl.grid(row=0, column=0, sticky="w", padx=14, pady=(12, 0))
         self.log_wrap = ctk.CTkFrame(right_panel, fg_color=self.PANEL_ALT_COLOR, corner_radius=10)
         self.log_wrap.grid(row=1, column=0, sticky="nsew", padx=12, pady=(10, 12))
         self.log_wrap.grid_columnconfigure(0, weight=1)
@@ -485,7 +639,7 @@ class BackupApp:
         ).pack(fill="x", padx=10, pady=(2, 8))
         self.main_cancel_button = ctk.CTkButton(
             self.progress_frame,
-            text="Отмена",
+            text=self._tr("cancel"),
             command=self._cancel_active_operation,
             corner_radius=10,
             height=32,
@@ -499,34 +653,73 @@ class BackupApp:
         self.main_cancel_button.pack(anchor="e", padx=10, pady=(0, 10))
         self._set_progress_visible(False)
 
+        self.copyright_label = ctk.CTkLabel(
+            root_wrap,
+            text=self._tr("copyright"),
+            text_color=self.MUTED_TEXT_COLOR,
+            font=ctk.CTkFont(family=font_family, size=10),
+        )
+        self.copyright_label.pack(fill="x", pady=(8, 0))
+
     def _open_feedback_email(self) -> None:
         try:
             self.root.clipboard_clear()
             self.root.clipboard_append(self.FEEDBACK_EMAIL)
             self.root.update_idletasks()
-            messagebox.showinfo("Обратная связь", f"Почта скопирована:\n{self.FEEDBACK_EMAIL}")
+            messagebox.showinfo(
+                self._tr("msg_feedback_title"),
+                self._tr("msg_feedback_copied", email=self.FEEDBACK_EMAIL),
+            )
         except Exception:
-            messagebox.showinfo("Обратная связь", f"Почта для связи: {self.FEEDBACK_EMAIL}")
+            messagebox.showinfo(
+                self._tr("msg_feedback_title"),
+                self._tr("msg_feedback_plain", email=self.FEEDBACK_EMAIL),
+            )
 
     def _available_actions_status(self, allow_full: bool, allow_to_backup: bool, allow_to_usb: bool) -> str:
         actions = []
         if allow_full:
-            actions.append(self.ACTION_FULL_LABEL)
+            actions.append(self._tr("full_backup"))
         if allow_to_backup:
-            actions.append(self.ACTION_TO_BACKUP_LABEL)
+            actions.append(self._tr("update_backup"))
         if allow_to_usb:
-            actions.append(self.ACTION_TO_USB_LABEL)
+            actions.append(self._tr("upload_diff"))
         if not actions:
-            return "Нет доступных действий"
-        return f"Доступно: {', '.join(actions)}"
+            return self._tr("no_actions")
+        return self._tr("actions_available", list=", ".join(actions))
 
     def _log(self, text: str, important: bool = True) -> None:
         if self.laconic_log and not important:
             return
         lowered = text.lower()
-        if any(token in lowered for token in ("ошибка", "не удалось", "отменено", "exception", "fail")):
+        if any(
+            token in lowered
+            for token in (
+                "ошибка",
+                "не удалось",
+                "отменено",
+                "exception",
+                "fail",
+                "error",
+                "cancelled",
+                "canceled",
+            )
+        ):
             tag_name = "error"
-        elif any(token in lowered for token in ("готово", "заверш", "включен", "успеш", "совпадает")):
+        elif any(
+            token in lowered
+            for token in (
+                "готово",
+                "заверш",
+                "включен",
+                "успеш",
+                "совпадает",
+                "done",
+                "complete",
+                "enabled",
+                "matches",
+            )
+        ):
             tag_name = "success"
         else:
             tag_name = "system"
@@ -582,9 +775,9 @@ class BackupApp:
     def _fmt_seconds(seconds) -> str:
         return ProgressPresenter.format_seconds(seconds)
 
-    @staticmethod
-    def _fmt_size(num_bytes: int) -> str:
-        return ProgressPresenter.format_size(num_bytes)
+    def _fmt_size(self, num_bytes: int) -> str:
+        """Форматирует размер с учётом текущего языка."""
+        return ProgressPresenter.format_size(num_bytes, self._size_units())
 
     def _copy_file_streaming(
         self,
@@ -655,6 +848,7 @@ class BackupApp:
                 hover_color=self.DISABLED_COLOR,
                 text_color=self.MUTED_TEXT_COLOR,
             )
+
     def _update_action_buttons(self, mode: str, can_sync_to_backup: bool = False, can_sync_to_usb: bool = False) -> None:
         if self.is_busy:
             return
@@ -671,8 +865,8 @@ class BackupApp:
         current = (self.selected_device.get() or "").strip()
         if current and current not in labels:
             self.selected_device.set("")
-        self.status.set(f"Найдено источников: {len(self.devices)}")
-        self._log(f"Найдено устройств: {len(labels)}", important=False)
+        self.status.set(self._tr("sources_found", n=len(self.devices)))
+        self._log(self._tr("log_devices_found", n=len(labels)), important=False)
         self._on_inputs_changed()
 
     def _maybe_autostart_scan(self) -> None:
@@ -681,15 +875,17 @@ class BackupApp:
         if not self.autostart_device_id:
             return
         if not self.backup_target_dir.get().strip():
-            self._log("Автозапуск: пропущен, не выбрана папка бэкапа")
+            self._log(self._tr("log_autostart_skipped"))
             return
 
         wanted = _normalize_autostart_device_id(self.autostart_device_id)
         for d in self.devices:
             if d.device_id == wanted:
                 label = f"{d.drive} ({d.volume_label})"
-                self._log(f"Автозапуск: обнаружена флешка {label}. Запускаю сканирование.")
-                self.autolaunch_status_var.set(f"Автозапуск: включен ({d.drive} {d.volume_label})")
+                self._log(self._tr("log_autostart_found", label=label))
+                self.autolaunch_status_var.set(
+                    self._tr("autolaunch_status_on_drive", drive=d.drive, label=d.volume_label)
+                )
                 self.selected_device.set(label)
                 self.analyze_backup_mode()
                 return
@@ -701,18 +897,19 @@ class BackupApp:
             self.root.after(1500, self._maybe_autostart_scan)
             return
 
-        self._log("Автозапуск: нужная флешка не найдена", important=False)
+        self._log(self._tr("log_autostart_not_found"), important=False)
 
-    def _on_inputs_changed(self) -> None:
+    def _on_inputs_changed(self, *, clear_analysis: bool = True) -> None:
         if self.is_busy:
             return
-        self.analysis = None
-        self._update_action_buttons("none", False, False)
+        if clear_analysis:
+            self.analysis = None
+            self._update_action_buttons("none", False, False)
         if self.selected_device.get().strip() and self.backup_target_dir.get().strip():
-            self.status.set("Нажмите «Сканировать папку», чтобы проверить отличия")
+            self.status.set(self._tr("hint_scan_for_diff"))
 
     def pick_backup_target(self) -> None:
-        folder = filedialog.askdirectory(title="Выберите папку для бэкапа")
+        folder = filedialog.askdirectory(title=self._tr("pick_backup_folder_dialog"))
         if folder:
             self.backup_target_dir.set(folder)
 
@@ -722,11 +919,11 @@ class BackupApp:
 
     def enable_usb_autolaunch(self) -> None:
         if not self._is_admin():
-            messagebox.showerror("Права администратора", "Для настройки автозапуска нужны права администратора.\nЗапустите приложение от имени администратора.")
+            messagebox.showerror(self._tr("msg_admin_title"), self._tr("msg_admin_enable_body"))
             return
         device = self._selected_device_info()
         if not device:
-            messagebox.showerror("USB", "Выберите USB-устройство.")
+            messagebox.showerror(self._tr("msg_usb_title"), self._tr("msg_usb_pick"))
             return
 
         try:
@@ -737,10 +934,8 @@ class BackupApp:
             )
         except Exception as e:
             messagebox.showerror(
-                "Ошибка",
-                "Не удалось определить Device Instance Path для этой флешки.\n\n"
-                f"Причина: {e}\n\n"
-                "Решение: можно создать задачу вручную через Планировщик, или я добавлю поле для ручного ввода ID.",
+                self._tr("msg_error_title"),
+                self._tr("msg_instance_path_body", reason=str(e)),
             )
             return
 
@@ -748,20 +943,22 @@ class BackupApp:
             if int(result["returncode"]) != 0:
                 err_text = str(result["stderr"] or result["stdout"] or "").strip() or f"schtasks failed: {result['returncode']}"
                 raise RuntimeError(err_text)
-            self.autolaunch_status_var.set(f"Автозапуск: включен ({device.volume_label})")
-            self._log(f"Автозапуск включен для флешки: {device.volume_label}")
-            messagebox.showinfo("Готово", "Автозапуск включен.\nТеперь отключите и подключите флешку заново — приложение должно открыться и запустить сканирование.")
+            self.autolaunch_status_var.set(self._tr("autolaunch_status_on_label", label=device.volume_label))
+            self._log(self._tr("log_autostart_enabled", label=device.volume_label))
+            messagebox.showinfo(self._tr("msg_done_title"), self._tr("msg_autolaunch_on_body"))
         except Exception as e:
             messagebox.showerror(
-                "Ошибка",
-                "Не удалось создать задачу автозапуска.\n\n"
-                f"{e}\n\n"
-                f"Device Instance Path: {result.get('instance_path', '-')}",
+                self._tr("msg_error_title"),
+                self._tr(
+                    "msg_autolaunch_task_fail",
+                    error=str(e),
+                    instance_path=str(result.get("instance_path", "-")),
+                ),
             )
 
     def disable_usb_autolaunch(self) -> None:
         if not self._is_admin():
-            messagebox.showerror("Права администратора", "Для отключения автозапуска нужны права администратора.\nЗапустите приложение от имени администратора.")
+            messagebox.showerror(self._tr("msg_admin_title"), self._tr("msg_admin_disable_body"))
             return
         try:
             result = AutoLaunchService.delete_task()
@@ -769,34 +966,25 @@ class BackupApp:
             if int(result["returncode"]) not in (0, 1):
                 err_text = str(result["stderr"] or result["stdout"] or "").strip() or f"schtasks failed: {result['returncode']}"
                 raise RuntimeError(err_text)
-            self.autolaunch_status_var.set("Автозапуск: выключен")
-            self._log("Автозапуск отключен")
-            messagebox.showinfo("Готово", "Автозапуск отключен.")
+            self.autolaunch_status_var.set(self._tr("autolaunch_status_off"))
+            self._log(self._tr("log_autostart_disabled"))
+            messagebox.showinfo(self._tr("msg_done_title"), self._tr("msg_autolaunch_off_body"))
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось отключить автозапуск: {e}")
-
-    def _load_app_state(self) -> None:
-        legacy_path = PROJECT_ROOT / "config" / "app_state.json"
-        candidates = [APP_STATE_PATH]
-        if legacy_path != APP_STATE_PATH:
-            candidates.append(legacy_path)
-        for state_path in candidates:
-            if not state_path.exists():
-                continue
-            try:
-                data = json.loads(state_path.read_text(encoding="utf-8"))
-                last_backup_path = str(data.get("last_backup_path", "")).strip()
-                if last_backup_path:
-                    self.backup_target_dir.set(last_backup_path)
-                    return
-            except (OSError, json.JSONDecodeError):
-                continue
+            messagebox.showerror(self._tr("msg_error_title"), self._tr("msg_autolaunch_disable_fail", error=str(e)))
 
     def _save_app_state(self) -> None:
-        APP_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        data = {"last_backup_path": self.backup_target_dir.get().strip()}
+        """Сохраняет путь бэкапа и язык, объединяя с существующим JSON."""
+        merged: dict = {}
+        if APP_STATE_PATH.exists():
+            try:
+                merged = json.loads(APP_STATE_PATH.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                merged = {}
+        merged["last_backup_path"] = self.backup_target_dir.get().strip()
+        merged["language"] = self.language_manager.language
         try:
-            APP_STATE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            APP_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            APP_STATE_PATH.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
         except OSError:
             pass
 
@@ -815,7 +1003,7 @@ class BackupApp:
         target = Path(target_text)
         target.mkdir(parents=True, exist_ok=True)
 
-        self._set_busy(True, "Сканирование...")
+        self._set_busy(True, self._tr("busy_scanning"))
         self._open_scan_window()
         self.scan_cancel_event = threading.Event()
 
@@ -828,7 +1016,7 @@ class BackupApp:
                         scanned, total, current, start_ts, total == 0
                     ))
 
-                self._log("Начато сканирование флешки и папки бэкапа")
+                self._log(self._tr("log_scan_started"))
                 last_analyze_update = 0.0
 
                 def on_compare_progress(processed: int, total: int, rel: str) -> None:
@@ -842,7 +1030,7 @@ class BackupApp:
                             lambda p=processed, t=total, c=rel: self._update_scan_ui(
                                 p,
                                 t,
-                                f"Анализ: {c}",
+                                self._tr("analyze_line", path=c),
                                 start_ts,
                                 False,
                             ),
@@ -872,22 +1060,30 @@ class BackupApp:
                 pre_status_msg = str(meta.get("status_msg", "")).strip()
 
                 if pre_status_msg:
-                    self.root.after(0, lambda s=pre_status_msg: self._finish_scan(result, False, s))
+                    localized_pre = self._localize_scan_service_message(pre_status_msg)
+                    self.root.after(0, lambda s=localized_pre: self._finish_scan(result, False, s))
                     return
 
                 if mode == "full":
                     status_msg = self._available_actions_status(True, False, False)
-                    self._log(f"Выбран режим: полный бэкап (файлов на флешке: {src_count}, в бэкапе: {dst_count})")
+                    self._log(self._tr("log_mode_full", src=src_count, dst=dst_count))
                 elif mode == "sync":
                     status_msg = self._available_actions_status(False, bool(copy_to_backup_ops), bool(copy_to_usb_ops))
-                    self._log(f"Найдены отличия (в бэкап: {len(copy_to_backup_ops)}, на флешку: {len(copy_to_usb_ops)})")
+                    self._log(
+                        self._tr(
+                            "log_mode_diff",
+                            to_backup=len(copy_to_backup_ops),
+                            to_usb=len(copy_to_usb_ops),
+                        )
+                    )
                 else:
-                    status_msg = "Папка уже актуальна, бэкап не требуется"
-                    self._log(f"Бэкап не нужен: совпадает {matched} файлов")
+                    status_msg = self._tr("status_folder_up_to_date")
+                    self._log(self._tr("log_backup_not_needed", matched=matched))
                 self.root.after(0, lambda: self._finish_scan(result, False, status_msg))
 
             except Exception as e:
-                self.root.after(0, lambda: self._finish_scan(None, True, f"Ошибка сканирования: {e}"))
+                err_s = str(e)
+                self.root.after(0, lambda err=err_s: self._finish_scan(None, True, self._tr("log_scan_error", error=err)))
             finally:
                 if self.scan_cancel_event and self.scan_cancel_event.is_set():
                     self.root.after(0, lambda: self._finish_scan(None, True))
@@ -903,6 +1099,8 @@ class BackupApp:
         self.analyze_button.configure(state=state)
         self.enable_autolaunch_button.configure(state=state)
         self.disable_autolaunch_button.configure(state=state)
+        if hasattr(self, "language_segment"):
+            self.language_segment.configure(state="disabled" if busy else "normal")
         self._set_progress_visible(busy)
         if busy:
             self._set_action_button_state(self.full_backup_button, False)
@@ -911,11 +1109,11 @@ class BackupApp:
             self.main_cancel_button.configure(state="normal")
         else:
             self.progress_bar.set(0)
-            self.progress_text.set("Прогресс: 0%")
-            self.time_text.set("Прошло: 00:00:00 | Осталось: --:--:--")
-            self.progress_detail_text.set("Файл: -")
-            self.progress_speed_text.set("Скорость: 0.00 МБ/с")
-            self.main_cancel_button.configure(state="disabled", text="Отмена")
+            self.progress_text.set(self._tr("progress_zero"))
+            self.time_text.set(self._tr("time_initial"))
+            self.progress_detail_text.set(self._tr("file_dash"))
+            self.progress_speed_text.set(self._tr("speed_zero"))
+            self.main_cancel_button.configure(state="disabled", text=self._tr("cancel"))
             if self.analysis:
                 self._update_action_buttons(
                     self.analysis.get("mode", "none"),
@@ -938,14 +1136,14 @@ class BackupApp:
 
     def _open_scan_window(self) -> None:
         self.active_operation = "scan"
-        self.main_cancel_button.configure(text="Остановить сканирование", state="normal")
-        self.progress_text.set("Сканирование: 0%")
-        self.progress_detail_text.set("Файл: подготовка...")
-        self.progress_speed_text.set("Скорость: н/д")
+        self.main_cancel_button.configure(text=self._tr("stop_scan"), state="normal")
+        self.progress_text.set(self._tr("scanning_zero"))
+        self.progress_detail_text.set(self._tr("file_prep"))
+        self.progress_speed_text.set(self._tr("speed_na"))
 
     def _close_scan_window(self) -> None:
         self.active_operation = None
-        self.main_cancel_button.configure(state="disabled", text="Отмена")
+        self.main_cancel_button.configure(state="disabled", text=self._tr("cancel"))
 
     def _update_scan_ui(self, scanned: int, total: int, current: str, start_ts: float, is_indeterminate: bool = False) -> None:
         now = time.monotonic()
@@ -957,25 +1155,35 @@ class BackupApp:
         short_current = current if len(current) < 78 else current[:75] + "..."
         percent = int((scanned / max(1, total)) * 100) if (total > 0 and not is_indeterminate) else 0
         self.progress_bar.set(percent / 100.0 if total > 0 and not is_indeterminate else 0.0)
-        self.progress_text.set(f"Сканирование: {percent}% ({scanned}/{max(1, total)})" if total > 0 else f"Сканирование: {scanned}")
-        self.progress_detail_text.set(f"Файл: {short_current}")
-        self.time_text.set(f"Прошло: {self._fmt_seconds(elapsed)} | Осталось: --:--:--")
-        self.progress_speed_text.set("Скорость: н/д")
+        self.progress_text.set(
+            self._tr("scan_progress_pct", pct=percent, done=scanned, total=max(1, total))
+            if total > 0
+            else self._tr("scan_progress_only", done=scanned)
+        )
+        self.progress_detail_text.set(self._tr("file_current", name=short_current))
+        self.time_text.set(
+            self._tr(
+                "elapsed_remaining",
+                elapsed=self._fmt_seconds(elapsed),
+                remaining="--:--:--",
+            )
+        )
+        self.progress_speed_text.set(self._tr("speed_na"))
 
     def _cancel_scan(self) -> None:
         if self.scan_cancel_event:
             self.scan_cancel_event.set()
         self.main_cancel_button.configure(state="disabled")
-        self._log("Сканирование отменено пользователем")
+        self._log(self._tr("log_scan_cancelled"))
         self._close_scan_window()
-        self._set_busy(False, "Сканирование отменено")
-        self.status.set("Сканирование отменено. Нажмите «Сканировать папку» для повтора")
+        self._set_busy(False, self._tr("scan_cancelled_status"))
+        self.status.set(self._tr("scan_cancelled_hint"))
 
     def _close_transfer_window(self) -> None:
         self.transfer_cancel_requested = False
         self.transfer_cancel_event = None
         self.active_operation = None
-        self.main_cancel_button.configure(state="disabled", text="Отмена")
+        self.main_cancel_button.configure(state="disabled", text=self._tr("cancel"))
 
     def _cancel_transfer(self) -> None:
         if self.transfer_cancel_requested:
@@ -984,17 +1192,17 @@ class BackupApp:
         self.main_cancel_button.configure(state="disabled")
         if self.transfer_cancel_event:
             self.transfer_cancel_event.set()
-        self._log("Передача файлов отменена пользователем")
-        self.status.set("Передача файлов отменяется...")
+        self._log(self._tr("log_transfer_cancelled"))
+        self.status.set(self._tr("transfer_cancelling"))
 
     def _open_transfer_window(self, action: str) -> None:
         self.transfer_cancel_requested = False
         self.transfer_cancel_event = threading.Event()
         self.active_operation = "copy"
-        self.main_cancel_button.configure(text="Остановить копирование", state="normal")
-        self.progress_text.set(f"{action}: 0% (0/0)")
-        self.progress_detail_text.set("Файл: подготовка...")
-        self.progress_speed_text.set("Скорость: 0.00 МБ/с")
+        self.main_cancel_button.configure(text=self._tr("stop_copy"), state="normal")
+        self.progress_text.set(self._tr("copy_progress", action=action, pct=0, done=0, total=0))
+        self.progress_detail_text.set(self._tr("file_prep"))
+        self.progress_speed_text.set(self._tr("speed_zero"))
 
     def _update_progress_ui(self, done: int, total: int, bytes_done: int, bytes_total: int, current: str, start_ts: float, action: str) -> None:
         short_current = current if len(current) < 78 else current[:75] + "..."
@@ -1008,10 +1216,25 @@ class BackupApp:
         eta = (remaining_bytes / speed_bps) if speed_bps > 0 else None
 
         self.progress_bar.set(percent / 100.0)
-        self.progress_text.set(f"{action}: {percent}% ({done}/{total})")
-        self.progress_detail_text.set(f"Файл: {short_current}")
-        self.time_text.set(f"Прошло: {self._fmt_seconds(elapsed)} | Осталось: {self._fmt_seconds(eta)}")
-        self.progress_speed_text.set(ProgressPresenter.format_speed_and_remaining(speed_bps, total - done, remaining_bytes))
+        self.progress_text.set(self._tr("copy_progress", action=action, pct=percent, done=done, total=total))
+        self.progress_detail_text.set(self._tr("file_current", name=short_current))
+        self.time_text.set(
+            self._tr(
+                "elapsed_remaining",
+                elapsed=self._fmt_seconds(elapsed),
+                remaining=self._fmt_seconds(eta),
+            )
+        )
+        self.progress_speed_text.set(
+            ProgressPresenter.format_speed_and_remaining(
+                speed_bps,
+                total - done,
+                remaining_bytes,
+                units=self._size_units(),
+                speed_template=self._tr("progress.speed_mbps"),
+                items_template=self._tr("progress.items_remaining"),
+            )
+        )
 
     def _cancel_active_operation(self) -> None:
         if self.active_operation == "scan":
@@ -1023,44 +1246,47 @@ class BackupApp:
 
     def _run_copy_job(self, direction: str) -> None:
         if direction == "to_backup":
-            self._log(f"Запрошено действие: {self.ACTION_TO_BACKUP_LABEL}", important=False)
+            self._log(self._tr("log_action_to_backup", action=self._tr("update_backup")), important=False)
         elif direction == "to_usb":
-            self._log(f"Запрошено действие: {self.ACTION_TO_USB_LABEL}", important=False)
+            self._log(self._tr("log_action_to_usb", action=self._tr("upload_diff")), important=False)
         else:
-            self._log("Запрошено действие: копирование", important=False)
+            self._log(self._tr("log_action_copy"), important=False)
         try:
             if self.is_busy:
-                messagebox.showinfo("Занято", "Подождите завершения текущей операции.")
+                messagebox.showinfo(self._tr("msg_busy_title"), self._tr("msg_busy_body"))
                 return
             if not self.analysis:
-                messagebox.showerror("Проверка", "Сначала нажмите 'Сканировать папку'.")
+                messagebox.showerror(self._tr("msg_need_scan_title"), self._tr("msg_need_scan_body"))
                 return
 
             if direction == "to_backup":
                 ops = self.analysis.get("ops_to_backup", [])
                 bytes_total_value = self.analysis.get("bytes_to_backup", 0)
-                action = "Обновление папки бэкапа"
+                action = self._tr("job_to_backup")
             elif direction == "to_usb":
                 ops = self.analysis.get("ops_to_usb", [])
                 bytes_total_value = self.analysis.get("bytes_to_usb", 0)
-                action = "Загрузка отличий на флешку"
+                action = self._tr("job_to_usb")
             else:
                 ops = []
                 bytes_total_value = 0
-                action = "Копирование"
+                action = self._tr("job_copy")
 
-            self._log(f"Подготовка: {action} ({len(ops)} файлов)", important=False)
+            self._log(self._tr("log_prep", action=action, n=len(ops)), important=False)
             if not ops:
-                messagebox.showinfo("Информация", "Копировать нечего.")
+                messagebox.showinfo(self._tr("msg_info_title"), self._tr("msg_nothing_to_copy"))
                 return
 
-            self._set_busy(True, f"Выполняется: {action.lower()}...")
-            self._open_transfer_window("Копирование")
-            self._log(f"Начато: {action} ({len(ops)} файлов, {self._fmt_size(bytes_total_value)})")
+            running = self._tr("job_running", action=action.lower())
+            self._set_busy(True, running)
+            self._open_transfer_window(self._tr("transfer_short"))
+            self._log(
+                self._tr("log_started", action=action, n=len(ops), size=self._fmt_size(bytes_total_value)),
+            )
         except Exception as e:
-            self._set_busy(False, "Ошибка")
-            self._log(f"Не удалось начать копирование: {e}")
-            messagebox.showerror("Ошибка", f"Не удалось начать копирование.\n\nПричина:\n{e}")
+            self._set_busy(False, self._tr("error_status"))
+            self._log(self._tr("log_copy_start_fail", error=str(e)))
+            messagebox.showerror(self._tr("msg_error_title"), self._tr("msg_copy_start_fail", error=str(e)))
             return
 
         def worker() -> None:
@@ -1084,9 +1310,12 @@ class BackupApp:
 
                 def on_err() -> None:
                     self._close_transfer_window()
-                    self._set_busy(False, "Ошибка копирования")
-                    self._log(f"Ошибка копирования файла {err_file}: {err_text}")
-                    messagebox.showerror("Ошибка копирования", f"Не удалось скопировать файл:\n{err_file}\n\nПричина:\n{err_text}")
+                    self._set_busy(False, self._tr("copy_error_status"))
+                    self._log(self._tr("log_copy_file_error", file=err_file, reason=err_text))
+                    messagebox.showerror(
+                        self._tr("msg_copy_file_error_title"),
+                        self._tr("msg_copy_file_error_body", file=err_file, reason=err_text),
+                    )
 
                 self.root.after(0, on_err)
 
@@ -1108,9 +1337,9 @@ class BackupApp:
         self._close_transfer_window()
         self.analysis = None
         self._update_action_buttons("none")
-        self._set_busy(False, "Передача отменена")
-        self._log(f"Операция отменена: {action}. Передано {done} файлов ({self._fmt_size(bytes_done)})")
-        self.status.set(f"Операция отменена: передано {done} файлов")
+        self._set_busy(False, self._tr("transfer_cancelled_status"))
+        self._log(self._tr("log_job_cancelled", action=action, done=done, size=self._fmt_size(bytes_done)))
+        self.status.set(self._tr("operation_cancelled_files", n=done))
 
     def _finish_scan(self, analysis_result: dict = None, was_cancelled: bool = False, status_msg: str = None) -> None:
         """Завершает сканирование, обновляет UI и analysis."""
@@ -1119,11 +1348,11 @@ class BackupApp:
         if was_cancelled:
             self.analysis = None
             self._update_action_buttons("none")
-            self._set_busy(False, "Сканирование отменено")
+            self._set_busy(False, self._tr("scan_cancelled_status"))
             return
 
         # Mark not busy BEFORE enabling action buttons.
-        self._set_busy(False, "Готово")
+        self._set_busy(False, self._tr("done_status"))
 
         if analysis_result is not None:
             self.analysis = analysis_result
@@ -1137,37 +1366,53 @@ class BackupApp:
                 self.status.set(status_msg)
                 self._log(status_msg)
             else:
-                self.status.set("Анализ завершён")
+                self.status.set(self._tr("analyzing_done"))
         else:
             self.analysis = None
             self._update_action_buttons("none")
-            self.status.set("Ошибка при сканировании")
+            self.status.set(self._tr("scan_failed_status"))
 
     def _finish_job(self, action: str, total: int, bytes_total: int, permission_skipped: list[tuple[str, str]] | None = None) -> None:
         skipped = permission_skipped or []
         copied = max(0, total - len(skipped))
         if skipped:
             self._log(
-                f"Операция завершена с предупреждениями: {action}. "
-                f"Скопировано {copied} из {total} файлов, пропущено {len(skipped)} ({self._fmt_size(bytes_total)})."
+                self._tr(
+                    "log_job_done_warn",
+                    action=action,
+                    copied=copied,
+                    total=total,
+                    skipped=len(skipped),
+                    size=self._fmt_size(bytes_total),
+                )
             )
         else:
-            self._log(f"Операция завершена: {action}. Скопировано {total} файлов ({self._fmt_size(bytes_total)})")
+            self._log(self._tr("log_job_done", action=action, total=total, size=self._fmt_size(bytes_total)))
         self._close_transfer_window()
         if skipped:
-            self._set_busy(False, "Операция завершена с предупреждениями")
+            self._set_busy(False, self._tr("operation_done_warnings"))
             details = "\n".join(f"- {p}" for p, _ in skipped[:5])
-            tail = "" if len(skipped) <= 5 else f"\n... и еще {len(skipped) - 5} файлов"
+            tail = (
+                ""
+                if len(skipped) <= 5
+                else self._tr("msg_warnings_tail", n=len(skipped) - 5)
+            )
             messagebox.showwarning(
-                "Завершено с предупреждениями",
-                "Некоторые файлы были пропущены из-за ограничения доступа.\n\n"
-                f"Пропущено: {len(skipped)}\n\n{details}{tail}",
+                self._tr("msg_warnings_title"),
+                self._tr(
+                    "msg_warnings_body",
+                    skipped=len(skipped),
+                    details=details,
+                    tail=tail,
+                ),
             )
         else:
-            self._set_busy(False, "Операция завершена")
+            self._set_busy(False, self._tr("operation_done"))
         self.analysis = None
         self._update_action_buttons("none")
-        self.status.set("Операция завершена с предупреждениями" if skipped else "Операция завершена")
+        self.status.set(
+            self._tr("operation_done_warnings") if skipped else self._tr("operation_done")
+        )
 
     def run_full_backup(self) -> None:
         self._run_copy_job("to_backup")

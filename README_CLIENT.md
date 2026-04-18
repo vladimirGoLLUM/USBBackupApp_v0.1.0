@@ -62,13 +62,29 @@ After file enumeration, **difference analysis** runs — this is expected. Watch
 
 Files may be locked by another app or cloud sync (e.g. OneDrive). A warning dialog may list skipped paths — close locking apps and retry.
 
+### How does autostart work (Task Scheduler + WMI)
+
+Both parts are used, with different roles:
+
+- **Windows Task Scheduler** starts a small background instance of the app (`--wmi-daemon`) **at user logon**. Without this scheduled task, the watcher would not start automatically after a reboot.
+- **WMI** — the running daemon listens for volume arrival events and, when the **correct** USB stick is inserted (matched by volume serial), it opens the main window and begins scanning.
+
+Scheduled task name: **`USBBackupApp_WMI_Daemon`** (an older task name may be removed automatically when you enable autostart again).
+
+### How do I enable autostart?
+
+1. Connect the USB drive and run **USB Backup App as Administrator** (elevated rights are required to create the scheduled task).
+2. Under **Source**, select that USB drive.
+3. Under **Autostart for this USB**, click **Enable autostart** and wait for the success message.
+4. **Disconnect and reconnect** the drive — the app window should open and scanning should start (if a backup folder is already configured).
+
 ### How do I disable autostart?
 
 1. Run **USB Backup App as Administrator**.
 2. Under **Autostart for this USB**, click **Disable autostart**.
 3. Wait for the success confirmation.
 
-Alternatively, open **Windows Task Scheduler** and remove the task created by the app (task name is defined in developer docs / sources — typically related to `USBBackupApp`).
+**Manually:** open **Task Scheduler** (`taskschd.msc`) → Task Scheduler Library → locate **`USBBackupApp_WMI_Daemon`** and delete it.
 
 ### Is internet required?
 

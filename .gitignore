@@ -21,6 +21,7 @@ env/
 # PyInstaller output
 /source/build/
 /source/dist/
+/source/dist_build/
 
 # Local app state
 /source/config/app_state.json

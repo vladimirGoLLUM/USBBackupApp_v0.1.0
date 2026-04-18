@@ -5,7 +5,7 @@ a = Analysis(
     ['src\\main.py'],
     pathex=['src'],
     binaries=[],
-    datas=[('VERSION', '.')],
+    datas=[('VERSION', '.'), ('data\\translations.json', 'data')],
     hiddenimports=['darkdetect'],
     hookspath=[],
     hooksconfig={},
